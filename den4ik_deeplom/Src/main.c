@@ -42,33 +42,35 @@ void setTIM3_period(uint16_t period)
 	TIM3->CCR1 = period/2;
 }
 
-void initUSART2(void)
+void initUSART1(void)
 {
-	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;
-	RCC->APB2ENR |= RCC_APB2ENR_AFIOEN;						//включить тактирование альтернативных ф-ций портов
-	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;					//включить тактирование UART2
+    // Включение тактирования GPIOA и USART1
+    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_AFIOEN | RCC_APB2ENR_USART1EN;
 
-	GPIOA->CRL &= ~(GPIO_CRL_MODE2 | GPIO_CRL_CNF2);		//PA2 на выход
-	GPIOA->CRL |= (GPIO_CRL_MODE2_1 | GPIO_CRL_CNF2_1);
+    // Настройка PA9 (TX) как alternate function push-pull output
+    GPIOA->CRH &= ~(GPIO_CRH_MODE9 | GPIO_CRH_CNF9);
+    GPIOA->CRH |= (GPIO_CRH_MODE9_1 | GPIO_CRH_MODE9_0) | GPIO_CRH_CNF9_1;
 
-	GPIOA->CRL &= ~(GPIO_CRL_MODE3 | GPIO_CRL_CNF3);		//PA3 - вход
-	GPIOA->CRL |= GPIO_CRL_CNF3_0;
+    // Настройка PA10 (RX) как input floating
+    GPIOA->CRH &= ~(GPIO_CRH_MODE10 | GPIO_CRH_CNF10);
+    GPIOA->CRH |= GPIO_CRH_CNF10_0;
 
 	/*****************************************
 	Скорость передачи данных - 9600
-	Частота шины APB1 - 32МГц
+	Частота шины APB1 - 64МГц
 
-	1. USARTDIV = 32'000'000/(16*9600) = 208.3
-	2. 208 = 0xD0
-	3. 16*0.3 = 4.8
+	1. USARTDIV = 64'000'000/(16*9600) = 416.6
+	2. 416 = 0x1A0
+	3. 16*0.6 = 9,6
 	4. Итого 0xD05
 	*****************************************/
-	USART2->BRR = 0xD05;
+    USART1->BRR = 0x1A0A;
 
-	USART2->CR1 |= USART_CR1_RE | USART_CR1_TE | USART_CR1_UE;
-	USART2->CR1 |= USART_CR1_RXNEIE;						//разрешить прерывание по приему байта данных
+    // Включение USART1, передатчика и приемника
+    USART1->CR1 |= USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
+    USART1->CR1 |= USART_CR1_RXNEIE;  // Разрешить прерывание по приему
 
-	NVIC_EnableIRQ(USART2_IRQn);
+    NVIC_EnableIRQ(USART1_IRQn);
 }
 
 void txStr(char *str)
@@ -77,8 +79,8 @@ void txStr(char *str)
 	strcat(str,"\r\n");									//добавляем символ конца строки
 	for (i = 0; i < strlen(str); i++)
 	{
-		USART2->DR = str[i];								//передаём байт данных
-		while ((USART2->SR & USART_SR_TC)==0) {};			//ждём окончания передачи
+		USART1->DR = str[i];								//передаём байт данных
+		while ((USART1->SR & USART_SR_TC)==0) {};			//ждём окончания передачи
 	}
 }
 
@@ -189,55 +191,47 @@ void initGPIO()
 	RCC->APB2ENR |= RCC_APB2ENR_IOPBEN;
 
 	//очистка полей
-	GPIOA->CRL &= ~(GPIO_CRL_CNF5 | GPIO_CRL_MODE5);
-	GPIOA->CRL |= GPIO_CRL_MODE5_1;				//PA5, выход 2МГц
-
-	GPIOA->CRH &= ~(GPIO_CRH_CNF8 | GPIO_CRH_MODE8);
-	GPIOA->CRH |= GPIO_CRH_MODE8_1;				//PA8, выход 2МГц
-
-	GPIOA->CRH &= ~(GPIO_CRH_CNF9 | GPIO_CRH_MODE9);
-	GPIOA->CRH |= GPIO_CRH_MODE9_1;				//PA9, выход 2МГц
-
-
-
+	//LED - PB12
+	GPIOB->CRH &= ~(GPIO_CRH_CNF12 | GPIO_CRH_MODE12);
+	GPIOB->CRH |= GPIO_CRH_MODE12_1;				//PA12, выход 2МГц
+	//EN2 - PB13
+	GPIOB->CRH &= ~(GPIO_CRH_CNF13 | GPIO_CRH_MODE13);
+	GPIOB->CRH |= GPIO_CRH_MODE13_1;				//PA13, выход 2МГц
+	//EN1 - PB14
+	GPIOB->CRH &= ~(GPIO_CRH_CNF14 | GPIO_CRH_MODE14);
+	GPIOB->CRH |= GPIO_CRH_MODE14_1;				//PA14, выход 2МГц
+	//Button - PA11
 	GPIOA->CRH &= ~(GPIO_CRH_MODE11 | GPIO_CRH_CNF11);
 	GPIOA->CRH |= GPIO_CRH_CNF11_1;			//Вход с подтяжкой
 	GPIOA->BSRR |= GPIO_BSRR_BS11;			//Подтяжка к Vdd
-	//кнопка на плате
-	GPIOC->CRH &= ~(GPIO_CRH_MODE13 | GPIO_CRH_CNF13);
-	GPIOC->CRH |= GPIO_CRH_CNF13_1;			//Вход с подтяжкой
-	GPIOC->BSRR |= GPIO_BSRR_BS13;			//Подтяжка к Vdd
-
+	//S1 - PA8
+	GPIOA->CRH &= ~(GPIO_CRH_MODE8 | GPIO_CRH_CNF8);
+	GPIOA->CRH |= GPIO_CRH_CNF8_1;			//Вход с подтяжкой
+	//S2 - PB15
 	GPIOB->CRH &= ~(GPIO_CRH_MODE14 | GPIO_CRH_CNF14);
 	GPIOB->CRH |= GPIO_CRH_CNF14_1;			//Вход с подтяжкой
-//	GPIOB->BSRR |= GPIO_BSRR_BS14;			//Подтяжка к Vdd
 
-	GPIOB->CRH &= ~(GPIO_CRH_MODE15 | GPIO_CRH_CNF15);
-	GPIOB->CRH |= GPIO_CRH_CNF15_1;			//Вход с подтяжкой
-//	GPIOB->BSRR |= GPIO_BSRR_BS15;			//Подтяжка к Vdd
 	/* Настройка самого прерывания */
 
 	// Настройка альтернативных фукнций портов.
 	// Настройки портов с 12 по 15 хранятся в регистре AFIO_EXTICR4.
 	// Регистры объединены в массив AFIO->EXTICR, нумерация массива начинается с нулевого элемента.
 	// Поэтому настройки AFIO_EXTICR4 хранятся в AFIO->EXTICR[3]
-	AFIO->EXTICR[2] |= AFIO_EXTICR3_EXTI11_PA;
-	AFIO->EXTICR[3] |= AFIO_EXTICR4_EXTI13_PC;	//кнопка на плате
-	AFIO->EXTICR[3] |= AFIO_EXTICR4_EXTI14_PB;
-	AFIO->EXTICR[3] |= AFIO_EXTICR4_EXTI15_PB;
-
-	EXTI->FTSR |= EXTI_FTSR_TR13;
-	EXTI->IMR |= EXTI_IMR_MR13;
+	AFIO->EXTICR[2] |= AFIO_EXTICR3_EXTI11_PA;	//Button - PA11
+	AFIO->EXTICR[2] |= AFIO_EXTICR3_EXTI8_PB;	//S1 - PA8
+	AFIO->EXTICR[3] |= AFIO_EXTICR4_EXTI15_PB;	//S2 - PB15
 
 	EXTI->FTSR |= EXTI_FTSR_TR11;
 	EXTI->IMR |= EXTI_IMR_MR11;
 
-	EXTI->FTSR |= EXTI_RTSR_TR14;
-	EXTI->IMR |= EXTI_IMR_MR14;
+	EXTI->FTSR |= EXTI_RTSR_TR8;
+	EXTI->IMR |= EXTI_IMR_MR8;
 
 	EXTI->FTSR |= EXTI_RTSR_TR15;
 	EXTI->IMR |= EXTI_IMR_MR15;
 
+	NVIC_EnableIRQ(EXTI9_5_IRQn);			//Разрешаем прерывание
+	NVIC_SetPriority(EXTI9_5_IRQn, 0);	//Выставляем приоритет
 	NVIC_EnableIRQ(EXTI15_10_IRQn);			//Разрешаем прерывание
 	NVIC_SetPriority(EXTI15_10_IRQn, 0);	//Выставляем приоритет
 }
@@ -246,7 +240,7 @@ int main(void)
 {
 	initClk();
 	initTIM3_PWM();
-	initUSART2();
+	initUSART1();
 	initGPIO();
 
     /* Loop forever */
@@ -261,21 +255,8 @@ int main(void)
 	}
 }
 
-void EXTI15_10_IRQHandler(void)
-{
-	if (EXTI->PR & EXTI_PR_PR11)
-	{
-		rotation = 0;
-		stopWindow();
-		EXTI->PR |= EXTI_PR_PR11;
-	}
-	if (EXTI->PR & EXTI_PR_PR13)
-	{
-		rotation = 0;
-		stopWindow();
-		EXTI->PR |= EXTI_PR_PR13;
-	}
-	if (EXTI->PR & EXTI_PR_PR14)
+void EXTI9_5_IRQHandler(void){
+	if (EXTI->PR & EXTI_PR_PR8)
 	{
 		if ((GPIOB->IDR & GPIO_IDR_IDR15) == 0)
 		{
@@ -285,29 +266,31 @@ void EXTI15_10_IRQHandler(void)
 		{
 			rotation -= 1;
 		}
-		EXTI->PR |= EXTI_PR_PR14;
+		EXTI->PR |= EXTI_PR_PR8;
+	}
+}
+
+void EXTI15_10_IRQHandler(void)
+{
+	if (EXTI->PR & EXTI_PR_PR11)
+	{
+		rotation = 0;
+		stopWindow();
+		EXTI->PR |= EXTI_PR_PR11;
 	}
 	if (EXTI->PR & EXTI_PR_PR15)
 	{
 		EXTI->PR |= EXTI_PR_PR15;
-//		if ((GPIOB->IDR & GPIO_IDR_IDR14) == 0)
-//		{
-//			rotation -= 1;
-//		}
-//		else
-//		{
-//			rotation += 1;
-//		}
 	}
 }
 
-void USART2_IRQHandler(void)
+void USART1_IRQHandler(void)
 {
-	if ((USART2->SR & USART_SR_RXNE)!=0)		//Прерывание по приёму данных?
+	if ((USART1->SR & USART_SR_RXNE)!=0)		//Прерывание по приёму данных?
 	{
 		uint8_t pos = strlen(RxBuffer);			//Вычисляем позицию свободной ячейки
 
-		RxBuffer[pos] = USART2->DR;				//Считываем содержимое регистра данных
+		RxBuffer[pos] = USART1->DR;				//Считываем содержимое регистра данных
 
 		if ((RxBuffer[pos]== 0x0A) && (RxBuffer[pos-1]== 0x0D))							//Если это символ конца строки
 		{
