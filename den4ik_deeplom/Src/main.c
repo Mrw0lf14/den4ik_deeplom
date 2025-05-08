@@ -5,7 +5,16 @@ char RxBuffer[RX_BUFF_SIZE];					//Буфер приёма USART
 char TxBuffer[TX_BUFF_SIZE];					//Буфер передачи USART
 bool ComReceived;
 int32_t rotation = 0;
-uint32_t MAX_ROTATION = 1000;
+int32_t MAX_ROTATION = 1000;
+typedef enum{
+	MOTOR_OFF = 0,
+	MOTOR_OPEN,
+	MOTOR_CLOSE,
+	MOTOR_STOP
+} States;
+
+uint8_t state = MOTOR_OFF;
+uint32_t speed = 100;
 void initClk(void)
 {
 	// Enable HSI
@@ -94,7 +103,7 @@ void initTIM3_PWM(void)
 	RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;				//Включить тактирование TIM3
 
 	//Частота APB1 для таймеров = APB1Clk * 2 = 32МГц * 2 = 64МГц
-	TIM3->PSC = 100-1;								//Предделитель частоты (64000МГц/100 = 640кГц)
+	TIM3->PSC = 10000-1;								//Предделитель частоты (64000МГц/100 = 640кГц)
 	TIM3->ARR = 320-1;								//Модуль счёта таймера (640кГц/320 = 2кГц)
 	//TIM2->ARR = 80-1;								//Модуль счёта таймера (640кГц/80 = 8кГц)
 	TIM3->CCR1 = TIM3->ARR/2;
@@ -109,18 +118,27 @@ void initTIM3_PWM(void)
 
 void closeWindow(void)
 {
-	EN1_ON();
-	EN2_OFF();
-	TIM3->CR1 |= TIM_CR1_CEN;
+	if (state == MOTOR_STOP)
+	{
+		state = MOTOR_CLOSE;
+		EN1_ON();
+		EN2_OFF();
+		TIM3->CR1 |= TIM_CR1_CEN;
+	}
 }
 void openWindow(void)
 {
-	EN1_OFF();
-	EN2_ON();
-	TIM3->CR1 |= TIM_CR1_CEN;
+	if (state == MOTOR_STOP)
+	{
+		state = MOTOR_OPEN;
+		EN1_OFF();
+		EN2_ON();
+		TIM3->CR1 |= TIM_CR1_CEN;
+	}
 }
 void stopWindow(void)
 {
+	state = MOTOR_STOP;
 	EN1_OFF();
 	EN2_OFF();
 	TIM3->CR1 &= ~TIM_CR1_CEN;
@@ -134,22 +152,32 @@ void ExecuteCommand(void)
 	if (strncmp(RxBuffer,"*IDN?",5) == 0)					//Это команда "*IDN?"
 	{
 		//Она самая, возвращаем строку идентификации
-		strcpy(TxBuffer, "Denis Chernishev, IU4-31M");
+		strcpy(TxBuffer, "Denis Chernishev, IU4-41M");
 	}
 	else if (strncmp(RxBuffer,"OPEN",4) == 0)				//Команда запуска таймера?
 	{
-
-		strcpy(TxBuffer, "OK");
+		if (rotation < MAX_ROTATION)
+		{
+			openWindow();
+			strcpy(TxBuffer, "OK OPEN");
+		}
+		else
+			strcpy(TxBuffer, "MOTOR is out of MAX_ROT");
 	}
 	else if (strncmp(RxBuffer,"CLOSE",5) == 0)				//Команда запуска таймера?
 	{
-
-		strcpy(TxBuffer, "OK");
+		if (rotation > 0)
+		{
+			closeWindow();
+			strcpy(TxBuffer, "OK CLOSE");
+		}
+		else
+			strcpy(TxBuffer, "MOTOR is out of 0");
 	}
 	else if (strncmp(RxBuffer,"STOP",4) == 0)				//Команда остановки таймера?
 	{
 		stopWindow();
-		strcpy(TxBuffer, "OK");
+		strcpy(TxBuffer, "OK STOP");
 	}
 	else if (strncmp(RxBuffer,"SPEED",5) == 0)				//Команда изменения периода таймера?
 	{
@@ -165,6 +193,11 @@ void ExecuteCommand(void)
 		}
 		else
 			strcpy(TxBuffer, "Parameter is out of range");	//ругаемся
+	}
+	else if (strncmp(RxBuffer,"STATUS",6) == 0)
+	{
+		sprintf(TxBuffer,"Rot = %d\nState = %d", rotation, state);
+//		strcpy(TxBuffer, "OK");
 	}
 	else if (strncmp(RxBuffer,"CALIB",5) == 0)
 	{
@@ -193,13 +226,14 @@ void initGPIO()
 	//очистка полей
 	//LED - PB12
 	GPIOB->CRH &= ~(GPIO_CRH_CNF12 | GPIO_CRH_MODE12);
-	GPIOB->CRH |= GPIO_CRH_MODE12_1;				//PA12, выход 2МГц
-	//EN2 - PB13
-	GPIOB->CRH &= ~(GPIO_CRH_CNF13 | GPIO_CRH_MODE13);
-	GPIOB->CRH |= GPIO_CRH_MODE13_1;				//PA13, выход 2МГц
-	//EN1 - PB14
-	GPIOB->CRH &= ~(GPIO_CRH_CNF14 | GPIO_CRH_MODE14);
-	GPIOB->CRH |= GPIO_CRH_MODE14_1;				//PA14, выход 2МГц
+	GPIOB->CRH |= GPIO_CRH_MODE12_1;				//PB12, выход 2МГц
+	// EN2 - PB13 (open drain output, 2MHz)
+	GPIOB->CRH &= ~(GPIO_CRH_CNF13 | GPIO_CRH_MODE13);  // Сброс битов конфигурации
+	GPIOB->CRH |= (GPIO_CRH_MODE13_1 | GPIO_CRH_CNF13_0);  // 2MHz output, open drain
+
+	// EN1 - PB14 (open drain output, 2MHz)
+	GPIOB->CRH &= ~(GPIO_CRH_CNF14 | GPIO_CRH_MODE14);  // Сброс битов конфигурации
+	GPIOB->CRH |= (GPIO_CRH_MODE14_1 | GPIO_CRH_CNF14_0);  // 2MHz output, open drain
 	//Button - PA11
 	GPIOA->CRH &= ~(GPIO_CRH_MODE11 | GPIO_CRH_CNF11);
 	GPIOA->CRH |= GPIO_CRH_CNF11_1;			//Вход с подтяжкой
@@ -208,8 +242,8 @@ void initGPIO()
 	GPIOA->CRH &= ~(GPIO_CRH_MODE8 | GPIO_CRH_CNF8);
 	GPIOA->CRH |= GPIO_CRH_CNF8_1;			//Вход с подтяжкой
 	//S2 - PB15
-	GPIOB->CRH &= ~(GPIO_CRH_MODE14 | GPIO_CRH_CNF14);
-	GPIOB->CRH |= GPIO_CRH_CNF14_1;			//Вход с подтяжкой
+	GPIOB->CRH &= ~(GPIO_CRH_MODE15 | GPIO_CRH_CNF15);
+	GPIOB->CRH |= GPIO_CRH_CNF15_1;			//Вход с подтяжкой
 
 	/* Настройка самого прерывания */
 
@@ -218,7 +252,7 @@ void initGPIO()
 	// Регистры объединены в массив AFIO->EXTICR, нумерация массива начинается с нулевого элемента.
 	// Поэтому настройки AFIO_EXTICR4 хранятся в AFIO->EXTICR[3]
 	AFIO->EXTICR[2] |= AFIO_EXTICR3_EXTI11_PA;	//Button - PA11
-	AFIO->EXTICR[2] |= AFIO_EXTICR3_EXTI8_PB;	//S1 - PA8
+	AFIO->EXTICR[2] |= AFIO_EXTICR3_EXTI8_PA;	//S1 - PA8
 	AFIO->EXTICR[3] |= AFIO_EXTICR4_EXTI15_PB;	//S2 - PB15
 
 	EXTI->FTSR |= EXTI_FTSR_TR11;
@@ -242,6 +276,20 @@ int main(void)
 	initTIM3_PWM();
 	initUSART1();
 	initGPIO();
+	stopWindow();
+	setTIM3_period(speed);
+//	EN1_SWAP();
+//	while(1)
+//	{
+//		strcpy(TxBuffer, "OK");
+//		txStr(TxBuffer);
+//		LED_SWAP();
+//		EN1_SWAP();
+//		EN2_SWAP();
+//		GPIOB->ODR ^= GPIO_ODR_ODR15;
+//		GPIOA->ODR ^= GPIO_ODR_ODR8;
+//		for(uint32_t i = 0; i < 5000000; i++);
+//	}
 
     /* Loop forever */
 	while(1)
@@ -250,8 +298,15 @@ int main(void)
 		{
 			ExecuteCommand();
 		}
-		if (rotation > MAX_ROTATION)
+		if ((rotation > MAX_ROTATION) && (state == MOTOR_OPEN))
+		{
 			stopWindow();
+		}
+		if ((rotation < 0) && (state == MOTOR_CLOSE))
+		{
+			stopWindow();
+			rotation = 0;
+		}
 	}
 }
 
@@ -302,5 +357,9 @@ void USART1_IRQHandler(void)
 
 void TIM3_IRQHandler(void)
 {
-	TIM3->SR &= ~TIM_SR_UIF;			//Сброс флага переполнения
+	TIM3->SR &= ~TIM_SR_UIF;
+	memset(TxBuffer,0,sizeof(TxBuffer));
+	sprintf(TxBuffer,"%d", rotation);
+	txStr(TxBuffer);
+//	EN2_SWAP();
 }
